@@ -1,0 +1,67 @@
+#!/bin/bash
+set -e
+
+APP=$1
+DOMAIN=$2
+ROOT=/var/www/$APP
+
+if [ -z "$APP" ] || [ -z "$DOMAIN" ]; then
+  echo "Usage: ./setup-site.sh <app-name> <domain>"
+  exit 1
+fi
+
+echo "🚀 Setting up site: $APP at $DOMAIN"
+
+sudo mkdir -p $ROOT/dist
+sudo chown -R ubuntu:ubuntu $ROOT
+
+# -----------------------------
+# NGINX CONFIG
+# -----------------------------
+NGINX_CONF="/etc/nginx/sites-available/$APP"
+
+sudo tee $NGINX_CONF > /dev/null <<EOF
+server {
+    listen 80;
+    server_name $DOMAIN;
+    return 301 https://\$host\$request_uri;
+}
+
+server {
+    listen 443 ssl;
+    server_name $DOMAIN;
+
+    ssl_certificate /etc/letsencrypt/live/$DOMAIN/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/$DOMAIN/privkey.pem;
+    include /etc/letsencrypt/options-ssl-nginx.conf;
+    ssl_dhparam /etc/letsencrypt/ssl-dhparams.pem;
+
+    root $ROOT/dist;
+    index index.html;
+
+    location / {
+        try_files \$uri \$uri/ /index.html;
+    }
+
+    location ~* \.(?:ico|css|js|gif|jpe?g|png|woff2?|ttf|svg|mp4)$ {
+        expires 30d;
+        access_log off;
+        add_header Cache-Control "public";
+    }
+}
+EOF
+
+sudo ln -sfn $NGINX_CONF /etc/nginx/sites-enabled/
+sudo nginx -t
+sudo systemctl reload nginx
+
+# -----------------------------
+# SSL CONFIG
+# -----------------------------
+echo "🔐 Generating SSL certificate..."
+sudo certbot certonly --webroot -w $ROOT/dist -d $DOMAIN --agree-tos --email admin@$DOMAIN --non-interactive
+
+sudo systemctl reload nginx
+
+echo "🎉 Setup complete for $DOMAIN"
+echo "Place your build in: $ROOT/dist"
